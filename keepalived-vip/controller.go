@@ -112,6 +112,7 @@ type ipvsControllerController struct {
 	reloadRateLimiter flowcontrol.RateLimiter
 	keepalived        *keepalived
 	configMapName     string
+	dryrun            bool
 	ruCfg             []vip
 	ruMD5             string
 
@@ -300,12 +301,13 @@ func (ipvsc *ipvsControllerController) Stop() error {
 }
 
 // newIPVSController creates a new controller from the given config.
-func newIPVSController(kubeClient *unversioned.Client, namespace string, useUnicast bool, configMapName string, vrid int) *ipvsControllerController {
+func newIPVSController(kubeClient *unversioned.Client, namespace string, useUnicast bool, configMapName string, vrid int, dryrun bool) *ipvsControllerController {
 	ipvsc := ipvsControllerController{
 		client:            kubeClient,
 		reloadRateLimiter: flowcontrol.NewTokenBucketRateLimiter(reloadQPS, int(reloadQPS)),
 		ruCfg:             []vip{},
 		configMapName:     configMapName,
+		dryrun:            dryrun,
 		stopCh:            make(chan struct{}),
 	}
 
@@ -347,6 +349,7 @@ func newIPVSController(kubeClient *unversioned.Client, namespace string, useUnic
 		useUnicast: useUnicast,
 		ipt:        iptInterface,
 		vrid:       vrid,
+		dryrun:     dryrun,
 	}
 
 	ipvsc.syncQueue = NewTaskQueue(ipvsc.sync)
