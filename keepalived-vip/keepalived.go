@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"syscall"
 	"text/template"
+	"time"
 
 	"github.com/golang/glog"
 	k8sexec "k8s.io/kubernetes/pkg/util/exec"
@@ -37,19 +38,21 @@ const (
 var keepalivedTmpl = "keepalived.tmpl"
 
 type keepalived struct {
-	iface      string
-	ip         string
-	netmask    int
-	priority   int
-	nodes      []string
-	neighbors  []string
-	useUnicast bool
-	started    bool
-	vips       []string
-	tmpl       *template.Template
-	cmd        *exec.Cmd
-	ipt        iptables.Interface
-	vrid       int
+	iface       string
+	ip          string
+	netmask     int
+	priority    int
+	nodes       []string
+	neighbors   []string
+	useUnicast  bool
+	started     bool
+	vips        []string
+	tmpl        *template.Template
+	cmd         *exec.Cmd
+	ipt         iptables.Interface
+	vrid        int
+	dryrun      bool
+	dryrunBreak bool
 }
 
 // WriteCfg creates a new keepalived configuration file.
@@ -97,6 +100,23 @@ func getVIPs(svcs []vip) []string {
 // Start starts a keepalived process in foreground.
 // In case of any error it will terminate the execution with a fatal error
 func (k *keepalived) Start() {
+	if k.dryrun {
+		glog.Info("dry run - not creating iptables chain %v", iptablesChain)
+		glog.Infof("dry run - not executing %v",
+			"keepalived --dont-fork --log-console --release-vips --pid /keepalived.pid")
+		k.started = true // simulate a started keepalived
+
+		k.dryrunBreak = false
+		for {
+			time.Sleep(10 * time.Second) // This is really bad, but for testing in dry run it will do
+			if k.dryrunBreak {
+				break
+			}
+		}
+
+		return
+	}
+
 	ae, err := k.ipt.EnsureChain(iptables.TableFilter, iptables.Chain(iptablesChain))
 	if err != nil {
 		glog.Fatalf("unexpected error: %v", err)
@@ -132,6 +152,11 @@ func (k *keepalived) Reload() error {
 		return nil
 	}
 
+	if k.dryrun {
+		glog.Info("dry run - not restarting keepalived")
+		return nil
+	}
+
 	glog.Info("reloading keepalived")
 	err := syscall.Kill(k.cmd.Process.Pid, syscall.SIGHUP)
 	if err != nil {
@@ -144,17 +169,27 @@ func (k *keepalived) Reload() error {
 // Stop stop keepalived process
 func (k *keepalived) Stop() {
 	for _, vip := range k.vips {
-		k.removeVIP(vip)
+		if k.dryrun {
+			glog.Infof("dry run - not removing virtual IP %v", vip)
+		} else {
+			k.removeVIP(vip)
+		}
 	}
 
-	err := k.ipt.FlushChain(iptables.TableFilter, iptables.Chain(iptablesChain))
-	if err != nil {
-		glog.V(2).Infof("unexpected error flushing iptables chain %v: %v", err, iptablesChain)
-	}
+	if k.dryrun {
+		glog.Infof("dry run - not flushing iptables Chain %v", iptablesChain)
+		glog.Info("dry run - not stopping keepalived")
+		k.dryrunBreak = true
+	} else {
+		err := k.ipt.FlushChain(iptables.TableFilter, iptables.Chain(iptablesChain))
+		if err != nil {
+			glog.V(2).Infof("unexpected error flushing iptables chain %v: %v", err, iptablesChain)
+		}
 
-	err = syscall.Kill(k.cmd.Process.Pid, syscall.SIGTERM)
-	if err != nil {
-		glog.Errorf("error stopping keepalived: %v", err)
+		err = syscall.Kill(k.cmd.Process.Pid, syscall.SIGTERM)
+		if err != nil {
+			glog.Errorf("error stopping keepalived: %v", err)
+		}
 	}
 }
 
