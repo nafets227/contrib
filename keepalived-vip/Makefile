@@ -4,12 +4,13 @@ all: push
 TAG = 0.10-dev
 PREFIX = www.intranet.nafets.de/kube-keepalived-vip
 BUILD_IMAGE = build-keepalived
+GOPATH ?= ~/go
 TEMP_GOPATH = ${GOPATH}:${GOPATH}/src/k8s.io/kubernetes/staging
 
 controller: clean
 	CGO_ENABLED=0 GOOS=linux go build -a -ldflags '-w' -o kube-keepalived-vip
 
-container: controller keepalived
+container: controller test keepalived
 	docker build --pull -t $(PREFIX):$(TAG) .
 
 keepalived:
@@ -28,3 +29,6 @@ clean:
 update-godeps:
 	GOPATH=$(TEMP_GOPATH) godep save ./...
 	ln -s kubernetes/staging/src/k8s.io/client-go vendor/k8s.io/client-go
+
+test: controller
+	GOPATH=$(TEMP_GOPATH) godep go test
